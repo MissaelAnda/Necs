@@ -8,6 +8,10 @@ namespace Necs
         void Delete(int index);
 
         void Delete(Entity entity);
+
+        bool Has(Entity entity);
+
+        int Count { get; }
     }
 
     internal class ComponentPool<T> : IComponentPool
@@ -48,6 +52,8 @@ namespace Necs
 
             return pos;
         }
+
+        public int? GetComponentPos(Entity e) => _sparsedEntities[e.Index];
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool Has(Entity e) => _sparsedEntities[e.Index].HasValue;

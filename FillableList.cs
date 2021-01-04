@@ -17,9 +17,18 @@ namespace Necs
 
         public bool Invalidate = true;
 
+        /// <summary>
+        /// The size of the used buffer
+        /// </summary>
+        public int Size => _size;
+
+        /// <summary>
+        /// The amount of valid items
+        /// </summary>
         public int Count => _count;
 
         int _capacity;
+        int _size;
         int _count;
         Stack<int> _fillable = new Stack<int>(DefaultFillableSpaces);
 
@@ -44,15 +53,18 @@ namespace Necs
             int pos;
             if (_fillable.Count != 0)
                 pos = _fillable.Pop();
-            else pos = _count++;
+            else pos = _size++;
 
+            EnsureCapacity(_size);
+
+            _count++;
             Buffer[pos] = value;
             return pos;
         }
 
         public (bool, T) TryGet(int index)
         {
-            if (index < 0 || index > _count || _fillable.Contains(index))
+            if (index < 0 || index > _size || _fillable.Contains(index))
                 return (false, default);
 
             return (true, Buffer[index]);
@@ -60,14 +72,14 @@ namespace Necs
 
         public (int, T) Remove(T value)
         {
-            int index = Array.IndexOf(Buffer, value, 0, _count);
+            int index = Array.IndexOf(Buffer, value, 0, _size);
 
             return RemoveAt(index);
         }
 
         public (int, T) RemoveAt(int pos)
         {
-            if (pos >= _count || pos < 0 || _fillable.Contains(pos))
+            if (pos >= _size || pos < 0 || _fillable.Contains(pos))
                 return (-1, default);
 
             _fillable.Push(pos);
@@ -76,8 +88,12 @@ namespace Necs
             if (Invalidate)
                 Buffer[pos] = default;
 
+            _count--;
             return (pos, temp);
         }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public bool IsValidIndex(int index) => index >= 0 && index < _size && !_fillable.Contains(index);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         void EnsureCapacity(int capacity)
