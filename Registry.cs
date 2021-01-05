@@ -1,41 +1,10 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Diagnostics;
+using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 
 namespace Necs
 {
-    public struct Entity
-    {
-        public readonly long Id;
-
-        public int Version => (int)(Id >> 32);
-
-        public int Index => (int)Id;
-
-        public Entity(int index, int version)
-        {
-            Id = ((long)version << 32 | (long)index);
-        }
-
-        public bool IsValid() => IsValidEntity(this);
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static bool IsValidEntity(Entity entity)
-        {
-            return (entity.Id >> 32) != (int)-1;
-        }
-
-        public static bool operator ==(Entity a, Entity b) => a.Id == b.Id;
-
-        public static bool operator !=(Entity a, Entity b) => a.Id != b.Id;
-
-        public override string ToString()
-        {
-            return $"Entity [ID: {Id} - Index: {Index} - Version: {Version}]";
-        }
-    }
-
     public class Registry
     {
         /// <summary>
@@ -51,6 +20,8 @@ namespace Necs
         internal FillableList<Entity> _entities = new FillableList<Entity>(1024);
         internal List<IComponentPool> _componentPools = new List<IComponentPool>();
         internal Dictionary<Type, int> _componentPoolIndices = new Dictionary<Type, int>();
+        SparsedList<Group> _entityGroup = new SparsedList<Group>(1024);
+        GroupManager _groupManager;
 
         bool _started = false;
 
@@ -58,6 +29,7 @@ namespace Necs
         {
             // Prevent deleting the entity so we keep its version when deleted
             _entities.Invalidate = false;
+            _groupManager = new GroupManager(this);
         }
 
         #region API
@@ -83,6 +55,9 @@ namespace Necs
 
             pool.Add(entity, new T1());
 
+            // Create the entity-group relationship
+            AddEntityTypes(entity, typeof(T1));
+
             return entity;
         }
 
@@ -94,6 +69,9 @@ namespace Necs
 
             pool.Add(entity, component);
 
+            // Create the entity-group relationship
+            AddEntityTypes(entity, typeof(T1));
+
             return entity;
         }
 
@@ -101,8 +79,16 @@ namespace Necs
         {
             ValidateEntity(entity);
 
-            for (int i = 0; i < _componentPools.Count; i++)
-                _componentPools[i].Delete(entity);
+            // Get and remove the entity-group relationship
+            var group = _entityGroup[entity.Index];
+            // The group can be null if the entity didn't have any components attached
+            group?.RemoveEntity(entity);
+            _entityGroup[entity.Index] = null;
+
+            // Only iterate through the component pools we know have the entity
+            if (group != null)
+                for (int i = 0; i < group.ComponentPools.Length; i++)
+                    group.ComponentPools[i].Delete(entity);
 
             _entities.RemoveAt(entity.Index);
         }
@@ -122,7 +108,12 @@ namespace Necs
 
             var pool = GetPoolOrCreate<T>();
 
+            if (pool.Has(entity))
+                return this;
+
             pool.Add(entity, new T());
+
+            AddEntityTypes(entity, typeof(T));
 
             return this;
         }
@@ -141,7 +132,12 @@ namespace Necs
 
             var pool = GetPoolOrCreate<T>();
 
+            if (pool.Has(entity))
+                return this;
+
             pool.Add(entity, component);
+
+            AddEntityTypes(entity, typeof(T));
 
             return this;
         }
@@ -164,7 +160,10 @@ namespace Necs
             if (pos.HasValue)
                 pool._components.Buffer[pos.Value] = new T();
             else
+            {
                 pool.Add(entity, new T());
+                AddEntityTypes(entity, typeof(T));
+            }
 
             return this;
         }
@@ -188,7 +187,10 @@ namespace Necs
             if (pos.HasValue)
                 pool._components.Buffer[pos.Value] = value;
             else
+            {
                 pool.Add(entity, value);
+                AddEntityTypes(entity, typeof(T));
+            }
 
             return this;
         }
@@ -222,6 +224,31 @@ namespace Necs
         }
 
         /// <summary>
+        /// Gets the component, if it doesn't exists it'll return null instead
+        /// of throwing <see cref="MissingComponentException"/> or <see cref="InvalidComponentException"/>
+        /// </summary>
+        /// <exception cref="InvalidEntityException">If the entity is not valid</exception>
+        /// <typeparam name="T">The component type</typeparam>
+        /// <param name="entity">Entity</param>
+        /// <returns>The component</returns>
+        public T GetComponentOrNull<T>(Entity entity) where T : class
+        {
+            ValidateEntity(entity);
+
+            var pool = GetPool<T>();
+
+            if (pool == null)
+                return null;
+
+            var (has, component) = pool.Get(entity);
+
+            if (!has)
+                return null;
+
+            return component;
+        }
+
+        /// <summary>
         /// Gets a reference the component, used for struct components
         /// </summary>
         /// <exception cref="InvalidEntityException">If the entity is not valid</exception>
@@ -239,7 +266,35 @@ namespace Necs
             if (pool == null)
                 throw new InvalidComponentException(typeof(T));
 
+            if (!pool.Has(entity))
+                throw new MissingComponentException(entity, typeof(T));
+
             return ref pool.GetRef(entity);
+        }
+
+        /// <summary>
+        /// Gets the component, if it doesn't exists it'll return null instead
+        /// of throwing <see cref="MissingComponentException"/> or <see cref="InvalidComponentException"/>
+        /// </summary>
+        /// <exception cref="InvalidEntityException">If the entity is not valid</exception>
+        /// <typeparam name="T">The component type</typeparam>
+        /// <param name="entity">Entity</param>
+        /// <returns>The component</returns>
+        public T? GetComponentOrNullStruct<T>(Entity entity) where T : struct
+        {
+            ValidateEntity(entity);
+
+            var pool = GetPool<T>();
+
+            if (pool == null)
+                return null;
+
+            var (has, component) = pool.Get(entity);
+
+            if (!has)
+                return null;
+
+            return component;
         }
 
         /// <summary>
@@ -253,24 +308,21 @@ namespace Necs
         {
             ValidateEntity(entity);
 
-            var pool = GetPool<T>();
+            var pool = GetPoolOrCreate<T>();
 
             int pos;
-            if (pool == null)
+            int? has = pool.GetComponentPos(entity);
+
+            // Add the component
+            if (!has.HasValue)
             {
-                pool = new ComponentPool<T>();
                 pos = pool.Add(entity, new T());
-                _componentPoolIndices.Add(typeof(T), _componentPools.Count);
-                _componentPools.Add(pool);
+
+                AddEntityTypes(entity, typeof(T));
             }
+            // Component already exists
             else
-            {
-                int? has = pool.GetComponentPos(entity);
-                if (!has.HasValue)
-                    pos = pool.Add(entity, new T());
-                else
-                    pos = has.Value;
-            }
+                pos = has.Value;
 
             return pool._components.Buffer[pos];
         }
@@ -286,24 +338,21 @@ namespace Necs
         {
             ValidateEntity(entity);
 
-            var pool = GetPool<T>();
+            var pool = GetPoolOrCreate<T>();
 
             int pos;
-            if (pool == null)
+            int? has = pool.GetComponentPos(entity);
+
+            // Add the component
+            if (!has.HasValue)
             {
-                pool = new ComponentPool<T>();
                 pos = pool.Add(entity, new T());
-                _componentPoolIndices.Add(typeof(T), _componentPools.Count);
-                _componentPools.Add(pool);
+
+                AddEntityTypes(entity, typeof(T));
             }
+            // Component already exists
             else
-            {
-                int? has = pool.GetComponentPos(entity);
-                if (!has.HasValue)
-                    pos = pool.Add(entity, new T());
-                else
-                    pos = has.Value;
-            }
+                pos = has.Value;
 
             return ref pool._components.Buffer[pos];
         }
@@ -463,12 +512,12 @@ namespace Necs
         {
             ValidateEntity(entity);
 
-            var pool = GetPool<T>();
+            var group = _entityGroup[entity.Index];
 
-            if (pool == null)
+            if (group == null)
                 return false;
 
-            return pool.Has(entity);
+            return group.HasType(typeof(T));
         }
 
         /// <summary>
@@ -480,12 +529,12 @@ namespace Necs
         {
             ValidateEntity(entity);
 
-            int components = 0;
-            for (int i = 0; i < _componentPools.Count; i++)
-                if (_componentPools[i].Has(entity))
-                    components++;
+            var group = _entityGroup[entity.Index];
 
-            return components;
+            if (group == null)
+                return 0;
+
+            return group.ComponentsCount;
         }
 
         /// <summary>
@@ -498,11 +547,7 @@ namespace Necs
         {
             ValidateEntity(entity);
 
-            for (int i = 0; i < _componentPools.Count; i++)
-                if (_componentPools[i].Has(entity))
-                    return false;
-
-            return true;
+            return _entityGroup[entity.Index] == null;
         }
 
         /// <summary>
@@ -528,8 +573,12 @@ namespace Necs
 
             var pool = GetPool<T>();
 
-            if (pool != null)
-                pool.Remove(entity);
+            if (pool == null || pool.Has(entity))
+                return this;
+
+            pool.Remove(entity);
+
+            RemoveEntityTypes(entity, typeof(T));
 
             return this;
         }
@@ -544,10 +593,16 @@ namespace Necs
         {
             ValidateEntity(entity);
 
-            for (int i = 0; i < _componentPools.Count; i++)
-            {
-                _componentPools[i].Delete(entity);
-            }
+            var pool = _entityGroup[entity.Index];
+
+            if (pool == null)
+                return this;
+
+            for (int i = 0; i < pool.ComponentsCount; i++)
+                pool.ComponentPools[i].Delete(entity);
+
+            pool.RemoveEntity(entity);
+            _entityGroup[entity.Index] = null;
 
             return this;
         }
@@ -574,6 +629,8 @@ namespace Necs
 
             if (!existed)
                 throw new MissingComponentException(entity, typeof(T));
+
+            RemoveEntityTypes(entity, typeof(T));
 
             return component;
         }
@@ -662,6 +719,15 @@ namespace Necs
         #endregion
 
         /// <summary>
+        /// Creates the component pool if it didn't exist. Helps to prevent <see cref="InvalidComponentException"/>
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        public void RegisterComponent<T>()
+        {
+            GetPoolOrCreate<T>();
+        }
+
+        /// <summary>
         /// Deletes the component pools that are empty to save space
         /// </summary>
         public void Clean()
@@ -669,7 +735,10 @@ namespace Necs
             foreach (var pool in _componentPools)
             {
                 if (pool.Count == 0)
+                {
                     _componentPools.Remove(pool);
+                    _groupManager.RemoveGroupsWith(pool.Type);
+                }
             }
         }
 
@@ -689,32 +758,78 @@ namespace Necs
             // TODO
         }
 
+        void AddEntityTypes(Entity entity, params Type[] types)
+        {
+            var group = _entityGroup[entity.Index];
+            if (group == null)
+                group = _groupManager.GetGroupOrCreate(types);
+            else
+            {
+                group.RemoveEntity(entity);
+                group = _groupManager.GetGroupOrCreate(group.GetTypesWith(types));
+            }
+
+            group.AddEntity(entity);
+            _entityGroup[entity.Index] = group;
+        }
+
+        void RemoveEntityTypes(Entity entity, params Type[] types)
+        {
+            var group = _entityGroup[entity.Index];
+
+            if (group != null)
+            {
+                group.RemoveEntity(entity);
+                var newArchetype = group.GetTypesWithout(types);
+                if (newArchetype.Length == 0)
+                {
+                    _entityGroup[entity.Index] = null;
+                    return;
+                }
+                group = _groupManager.GetGroupOrCreate(newArchetype);
+
+                group.AddEntity(entity);
+                _entityGroup[entity.Index] = group;
+            }
+        }
+
         [DebuggerHidden]
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        void ValidateEntity(Entity entity)
+        internal void ValidateEntity(Entity entity)
         {
             if (_entities.Buffer[entity.Index] != entity || !_entities.IsValidIndex(entity.Index))
                 throw new InvalidEntityException();
         }
 
-        ComponentPool<T> GetPoolOrCreate<T>()
+        internal ComponentPool<T> GetPoolOrCreate<T>()
         {
             var pool = GetPool<T>();
             if (pool != null)
                 return pool;
 
+            var type = typeof(T);
             pool = new ComponentPool<T>();
-            _componentPoolIndices.Add(typeof(T), _componentPools.Count);
+            _componentPoolIndices.Add(type, _componentPools.Count);
             _componentPools.Add(pool);
             return pool;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        ComponentPool<T> GetPool<T>()
+        internal ComponentPool<T> GetPool<T>()
         {
             var type = typeof(T);
             if (_componentPoolIndices.TryGetValue(type, out var index))
                 return (ComponentPool<T>)_componentPools[index];
+
+            return null;
+        }
+
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal IComponentPool GetPool(Type type)
+        {
+            if (_componentPoolIndices.TryGetValue(type, out var index))
+                return _componentPools[index];
 
             return null;
         }

@@ -12,17 +12,19 @@ namespace Necs
         bool Has(Entity entity);
 
         int Count { get; }
+
+        Type Type { get; }
     }
 
     internal class ComponentPool<T> : IComponentPool
     {
         public const int ComponentsArrayDefaultSize = 1024;
 
-        public readonly Type Type;
+        public Type Type { get; }
 
         internal FillableList<T> _components;
-        internal SparsedList<int> _packedEntities;
-        internal SparsedList<int> _sparsedEntities;
+        internal SparsedList<int?> _packedEntities;
+        internal SparsedList<int?> _sparsedEntities;
 
         T Default = default;
 
@@ -33,8 +35,8 @@ namespace Necs
             Type = typeof(T);
             var size = (int)capacity;
             _components = new FillableList<T>(size);
-            _packedEntities = new SparsedList<int>(size);
-            _sparsedEntities = new SparsedList<int>(size);
+            _packedEntities = new SparsedList<int?>(size);
+            _sparsedEntities = new SparsedList<int?>(size);
         }
 
         public int Add(Entity e, T value)

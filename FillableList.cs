@@ -62,9 +62,21 @@ namespace Necs
             return pos;
         }
 
+        public bool Replace(T value, T newValue)
+        {
+            int index = Array.IndexOf(Buffer, value, 0, _size);
+
+            if (index < 0 || index >= _size || _fillable.Contains(index))
+                return false;
+
+            Buffer[index] = newValue;
+
+            return true;
+        }
+
         public (bool, T) TryGet(int index)
         {
-            if (index < 0 || index > _size || _fillable.Contains(index))
+            if (index < 0 || index >= _size || _fillable.Contains(index))
                 return (false, default);
 
             return (true, Buffer[index]);

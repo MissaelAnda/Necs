@@ -3,18 +3,18 @@ using System.Runtime.CompilerServices;
 
 namespace Necs
 {
-    public class SparsedList<T> where T : struct
+    public class SparsedList<T>
     {
         public int Lenght => _array.Length;
 
-        T?[] _array;
+        T[] _array;
 
         public SparsedList(int capacity = 6)
         {
-            _array = new T?[capacity];
+            _array = new T[capacity];
         }
 
-        public void Set(int pos, T? value)
+        public void Set(int pos, T value)
         {
             if (pos < 0)
                 return;
@@ -39,7 +39,7 @@ namespace Necs
             }
         }
 
-        public T? this[int index]
+        public T this[int index]
         {
             get => _array[index];
             set => Set(index, value);
