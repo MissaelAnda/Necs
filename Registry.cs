@@ -20,8 +20,8 @@ namespace Necs
         internal FillableList<Entity> _entities = new FillableList<Entity>(1024);
         internal List<IComponentPool> _componentPools = new List<IComponentPool>();
         internal Dictionary<Type, int> _componentPoolIndices = new Dictionary<Type, int>();
-        SparsedList<Group> _entityGroup = new SparsedList<Group>(1024);
-        GroupManager _groupManager;
+        SparsedList<Archetype> _entityArchetype = new SparsedList<Archetype>(1024);
+        ArchetypeManager _archetypeManager;
 
         bool _started = false;
 
@@ -29,7 +29,7 @@ namespace Necs
         {
             // Prevent deleting the entity so we keep its version when deleted
             _entities.Invalidate = false;
-            _groupManager = new GroupManager(this);
+            _archetypeManager = new ArchetypeManager(this);
         }
 
         #region API
@@ -55,7 +55,7 @@ namespace Necs
 
             pool.Add(entity, new T1());
 
-            // Create the entity-group relationship
+            // Create the entity-archetype relationship
             AddEntityTypes(entity, typeof(T1));
 
             return entity;
@@ -69,7 +69,7 @@ namespace Necs
 
             pool.Add(entity, component);
 
-            // Create the entity-group relationship
+            // Create the entity-archetype relationship
             AddEntityTypes(entity, typeof(T1));
 
             return entity;
@@ -79,16 +79,16 @@ namespace Necs
         {
             ValidateEntity(entity);
 
-            // Get and remove the entity-group relationship
-            var group = _entityGroup[entity.Index];
-            // The group can be null if the entity didn't have any components attached
-            group?.RemoveEntity(entity);
-            _entityGroup[entity.Index] = null;
+            // Get and remove the entity-archetype relationship
+            var archetype = _entityArchetype[entity.Index];
+            // The archetype can be null if the entity didn't have any components attached
+            archetype?.RemoveEntity(entity);
+            _entityArchetype[entity.Index] = null;
 
             // Only iterate through the component pools we know have the entity
-            if (group != null)
-                for (int i = 0; i < group.ComponentPools.Length; i++)
-                    group.ComponentPools[i].Delete(entity);
+            if (archetype != null)
+                for (int i = 0; i < archetype.ComponentPools.Length; i++)
+                    archetype.ComponentPools[i].Delete(entity);
 
             _entities.RemoveAt(entity.Index);
         }
@@ -512,12 +512,12 @@ namespace Necs
         {
             ValidateEntity(entity);
 
-            var group = _entityGroup[entity.Index];
+            var archetype = _entityArchetype[entity.Index];
 
-            if (group == null)
+            if (archetype == null)
                 return false;
 
-            return group.HasType(typeof(T));
+            return archetype.HasType(typeof(T));
         }
 
         /// <summary>
@@ -529,12 +529,12 @@ namespace Necs
         {
             ValidateEntity(entity);
 
-            var group = _entityGroup[entity.Index];
+            var archetype = _entityArchetype[entity.Index];
 
-            if (group == null)
+            if (archetype == null)
                 return 0;
 
-            return group.ComponentsCount;
+            return archetype.ComponentsCount;
         }
 
         /// <summary>
@@ -547,7 +547,7 @@ namespace Necs
         {
             ValidateEntity(entity);
 
-            return _entityGroup[entity.Index] == null;
+            return _entityArchetype[entity.Index] == null;
         }
 
         /// <summary>
@@ -593,7 +593,7 @@ namespace Necs
         {
             ValidateEntity(entity);
 
-            var pool = _entityGroup[entity.Index];
+            var pool = _entityArchetype[entity.Index];
 
             if (pool == null)
                 return this;
@@ -602,7 +602,7 @@ namespace Necs
                 pool.ComponentPools[i].Delete(entity);
 
             pool.RemoveEntity(entity);
-            _entityGroup[entity.Index] = null;
+            _entityArchetype[entity.Index] = null;
 
             return this;
         }
@@ -737,7 +737,7 @@ namespace Necs
                 if (pool.Count == 0)
                 {
                     _componentPools.Remove(pool);
-                    _groupManager.RemoveGroupsWith(pool.Type);
+                    _archetypeManager.RemoveArchetypesWith(pool.Type);
                 }
             }
         }
@@ -760,36 +760,36 @@ namespace Necs
 
         void AddEntityTypes(Entity entity, params Type[] types)
         {
-            var group = _entityGroup[entity.Index];
-            if (group == null)
-                group = _groupManager.GetGroupOrCreate(types);
+            var archetype = _entityArchetype[entity.Index];
+            if (archetype == null)
+                archetype = _archetypeManager.GetArchetypeOrCreate(types);
             else
             {
-                group.RemoveEntity(entity);
-                group = _groupManager.GetGroupOrCreate(group.GetTypesWith(types));
+                archetype.RemoveEntity(entity);
+                archetype = _archetypeManager.GetArchetypeOrCreate(archetype.GetTypesWith(types));
             }
 
-            group.AddEntity(entity);
-            _entityGroup[entity.Index] = group;
+            archetype.AddEntity(entity);
+            _entityArchetype[entity.Index] = archetype;
         }
 
         void RemoveEntityTypes(Entity entity, params Type[] types)
         {
-            var group = _entityGroup[entity.Index];
+            var archetype = _entityArchetype[entity.Index];
 
-            if (group != null)
+            if (archetype != null)
             {
-                group.RemoveEntity(entity);
-                var newArchetype = group.GetTypesWithout(types);
+                archetype.RemoveEntity(entity);
+                var newArchetype = archetype.GetTypesWithout(types);
                 if (newArchetype.Length == 0)
                 {
-                    _entityGroup[entity.Index] = null;
+                    _entityArchetype[entity.Index] = null;
                     return;
                 }
-                group = _groupManager.GetGroupOrCreate(newArchetype);
+                archetype = _archetypeManager.GetArchetypeOrCreate(newArchetype);
 
-                group.AddEntity(entity);
-                _entityGroup[entity.Index] = group;
+                archetype.AddEntity(entity);
+                _entityArchetype[entity.Index] = archetype;
             }
         }
 

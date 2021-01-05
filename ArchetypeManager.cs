@@ -5,50 +5,50 @@ using System.Runtime.CompilerServices;
 
 namespace Necs
 {
-    internal class GroupManager
+    internal class ArchetypeManager
     {
-        Dictionary<int, Group> _groups = new Dictionary<int, Group>();
+        Dictionary<int, Archetype> _archetypes = new Dictionary<int, Archetype>();
         Registry _registry;
 
-        public GroupManager(Registry registry)
+        public ArchetypeManager(Registry registry)
         {
             _registry = registry;
         }
 
         /// <summary>
-        /// Returns the group if exists, else return <see langword="null"/>
+        /// Returns the archetype if exists, else return <see langword="null"/>
         /// </summary>
         /// <param name="types"></param>
         /// <returns></returns>
-        public Group GetGroup(params Type[] types)
+        public Archetype GetArchetype(params Type[] types)
         {
-            _groups.TryGetValue(CreateHash(types), out var group);
-            return group;
+            _archetypes.TryGetValue(CreateHash(types), out var archetype);
+            return archetype;
         }
 
         /// <summary>
-        /// Gets the group, if it doesn't exists creates it
+        /// Gets the archetype, if it doesn't exists creates it
         /// </summary>
         /// <param name="types"></param>
         /// <returns></returns>
-        public Group GetGroupOrCreate(params Type[] types)
+        public Archetype GetArchetypeOrCreate(params Type[] types)
         {
             var hash = CreateHash(types);
-            if (_groups.TryGetValue(hash, out var group))
-                return group;
+            if (_archetypes.TryGetValue(hash, out var archetype))
+                return archetype;
 
-            group = new Group(hash, _registry, types);
+            archetype = new Archetype(hash, _registry, types);
 
-            _groups.Add(hash, group);
+            _archetypes.Add(hash, archetype);
 
-            return group;
+            return archetype;
         }
 
-        public void RemoveGroupsWith(Type type)
+        public void RemoveArchetypesWith(Type type)
         {
-            foreach (var pair in _groups)
+            foreach (var pair in _archetypes)
                 if (pair.Value.HasType(type))
-                    _groups.Remove(pair.Value.Hash);
+                    _archetypes.Remove(pair.Value.Hash);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -61,7 +61,7 @@ namespace Necs
         }
     }
 
-    internal class Group
+    internal class Archetype
     {
         public readonly int Hash;
         public readonly Type[] Types;
@@ -73,11 +73,11 @@ namespace Necs
 
         public int EntitiesCount => Entities.Count;
 
-        public Group(Registry registry, params Type[] types) :
-            this(GroupManager.CreateHash(types), registry, types)
+        public Archetype(Registry registry, params Type[] types) :
+            this(ArchetypeManager.CreateHash(types), registry, types)
         { }
 
-        public Group(int hash, Registry registry, params Type[] types)
+        public Archetype(int hash, Registry registry, params Type[] types)
         {
             Types = types;
             ComponentPools = new IComponentPool[types.Length];
