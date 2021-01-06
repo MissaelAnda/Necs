@@ -51,6 +51,19 @@ namespace Necs
                     _archetypes.Remove(pair.Value.Hash);
         }
 
+        public Archetype[] GetArchetypes(Type[] types, Type[] without = null)
+        {
+            List<Archetype> archetypes = new List<Archetype>(10);
+            foreach (var archetype in _archetypes.Values)
+            {
+                if (archetype.HasTypes(types) &&
+                    (without == null || !archetype.HasTypes(without)))
+                    archetypes.Add(archetype);
+            }
+
+            return archetypes.ToArray();
+        }
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static int CreateHash(params Type[] types)
         {
@@ -88,6 +101,16 @@ namespace Necs
                 if ((ComponentPools[i] = registry.GetPool(types[i])) == null)
                     throw new InvalidComponentException(types[i]);
             }
+        }
+
+        public ComponentPool<T> GetPool<T>()
+        {
+            var type = typeof(T);
+            for (int i = 0; i < ComponentsCount; i++)
+                if (type == Types[i])
+                    return ComponentPools[i] as ComponentPool<T>;
+
+            return null;
         }
 
         public void AddEntity(Entity entity)
@@ -142,6 +165,16 @@ namespace Necs
                     return true;
 
             return false;
+        }
+
+
+        public bool HasTypes(params Type[] types)
+        {
+            for (int i = 0; i < types.Length; i++)
+                if (!HasType(types[i]))
+                    return false;
+
+            return true;
         }
     }
 }

@@ -17,13 +17,16 @@ namespace Necs
         /// </summary>
         public int EntitiesCount => _entities.Count;
 
-        internal FillableList<Entity> _entities = new FillableList<Entity>(1024);
-        internal List<IComponentPool> _componentPools = new List<IComponentPool>();
-        internal Dictionary<Type, int> _componentPoolIndices = new Dictionary<Type, int>();
+        /// <summary>
+        /// Whether the system execution has begun
+        /// </summary>
+        public bool Started { get; private set; } = false;
+
+        FillableList<Entity> _entities = new FillableList<Entity>(1024);
+        List<IComponentPool> _componentPools = new List<IComponentPool>();
+        Dictionary<Type, int> _componentPoolIndices = new Dictionary<Type, int>();
         SparsedList<Archetype> _entityArchetype = new SparsedList<Archetype>(1024);
         ArchetypeManager _archetypeManager;
-
-        bool _started = false;
 
         public Registry()
         {
@@ -555,9 +558,21 @@ namespace Necs
         /// </summary>
         /// <typeparam name="T"></typeparam>
         /// <returns></returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool ComponentExists<T>()
         {
             return GetPool<T>() != null;
+        }
+
+        /// <summary>
+        /// Checks if the component type exists in the registry
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <returns></returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public bool ComponentExists(Type type)
+        {
+            return GetPool(type) != null;
         }
 
         /// <summary>
@@ -635,12 +650,28 @@ namespace Necs
             return component;
         }
 
+        /// <summary>
+        /// Creates a view with the components
+        /// </summary>
+        /// <param name="types"></param>
+        /// <returns></returns>
+        public View GetView(params Type[] types)
+        {
+            return new View(_archetypeManager.GetArchetypes(types));
+        }
+
+        /// <summary>
+        /// Creates a view builder to set what components to include and exclude
+        /// </summary>
+        /// <returns></returns>
+        public ViewBuilder GetViewBuilder()
+        {
+            return new ViewBuilder(_archetypeManager);
+        }
+
 #if TODO
 
-        public View GetView<T1..., T16>()
-        {
-            
-        }
+        
 
         public (T1..., T16) RemoveComponents<T1..., T16>(int entity)
         {

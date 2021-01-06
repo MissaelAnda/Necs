@@ -17,6 +17,7 @@ namespace Necs
             Id = ((long)version << 32 | (long)index);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool IsValid() => IsValidEntity(this);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

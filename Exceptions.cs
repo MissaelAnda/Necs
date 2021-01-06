@@ -30,4 +30,23 @@ namespace Necs
             base($"The entity {entity.Id} doesn't have the component {component.FullName}.")
         { }
     }
+
+    /// <summary>
+    /// Thrown when one or more components in a view doesn't exist in the registry
+    /// </summary>
+    public class InvalidViewException : InvalidComponentException
+    {
+        internal static InvalidViewException Create(Registry registry, params Type[] types)
+        {
+            string error = "The registry doesn't have the component(s):\n";
+            for (int i = 0; i < types.Length; i++)
+                if (!registry.ComponentExists(types[i]))
+                    error += types[i].FullName + "\n";
+            
+            return new InvalidViewException(error);
+        }
+
+        internal InvalidViewException(string message) : base(message)
+        { }
+    }
 }
