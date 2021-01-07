@@ -22,11 +22,54 @@ namespace Necs
         /// </summary>
         public bool Started { get; private set; } = false;
 
+        /// <summary>
+        /// Whether is currently executing start systems
+        /// </summary>
+        public bool Starting { get; private set; } = false;
+
+        /// <summary>
+        /// Whether is currently executing process systems
+        /// </summary>
+        public bool Processing { get; private set; } = false;
+
+        /// <summary>
+        /// Whether is currently executing end systems
+        /// </summary>
+        public bool Ending { get; private set; } = false;
+
         FillableList<Entity> _entities = new FillableList<Entity>(1024);
         List<IComponentPool> _componentPools = new List<IComponentPool>();
         Dictionary<Type, int> _componentPoolIndices = new Dictionary<Type, int>();
         SparsedList<Archetype> _entityArchetype = new SparsedList<Archetype>(1024);
         ArchetypeManager _archetypeManager;
+
+        #region Systems
+
+        List<IStartSystem> _startSystems = new List<IStartSystem>();
+
+        List<IProcessSystem> _processSystems = new List<IProcessSystem>();
+
+        List<IEndSystem> _endSystems = new List<IEndSystem>();
+
+        Queue<IPreProcessSystem> _preProcessSystems = new Queue<IPreProcessSystem>();
+
+        Queue<IPostProcessSystem> _postProcessSystems = new Queue<IPostProcessSystem>();
+
+        Queue<BaseSystem> _queuedSystems = new Queue<BaseSystem>();
+
+        Queue<ISingleFrameSystem> _singleFrameSystems = new Queue<ISingleFrameSystem>();
+
+        #region Notificables
+
+        Action<Registry> _startNotificables;
+
+        Action<Registry> _endNotificables;
+
+        #endregion
+
+        bool _restart = false;
+
+        #endregion
 
         public Registry()
         {
@@ -36,6 +79,8 @@ namespace Necs
         }
 
         #region API
+
+        #region Entities
 
         public Entity CreateEntity()
         {
@@ -93,7 +138,20 @@ namespace Necs
                 for (int i = 0; i < archetype.ComponentPools.Length; i++)
                     archetype.ComponentPools[i].Delete(entity);
 
-            _entities.RemoveAt(entity.Index);
+            _entities.Remove(entity);
+        }
+
+        #endregion
+
+        #region Components
+
+        /// <summary>
+        /// Creates the component pool if it didn't exist. Helps to prevent <see cref="InvalidComponentException"/>
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        public void RegisterComponent<T>()
+        {
+            GetPoolOrCreate<T>();
         }
 
         #region AddComponent<T1.., T16>
@@ -650,6 +708,8 @@ namespace Necs
             return component;
         }
 
+        #endregion
+
         /// <summary>
         /// Creates a view with the components
         /// </summary>
@@ -661,102 +721,449 @@ namespace Necs
         }
 
         /// <summary>
-        /// Creates a view builder to set what components to include and exclude
+        /// Creates a view from a descriptor
         /// </summary>
+        /// <param name="descriptor"></param>
         /// <returns></returns>
-        public ViewBuilder GetViewBuilder()
+        public View GetView(ViewDescriptor descriptor)
         {
-            return new ViewBuilder(_archetypeManager);
+            return new View(_archetypeManager.GetArchetypes(
+                descriptor.WithComponents.ToArray(), descriptor.WithoutComponents.Count > 0 ?
+                    descriptor.WithoutComponents.ToArray() : null)
+            );
         }
-
-#if TODO
-
-        
-
-        public (T1..., T16) RemoveComponents<T1..., T16>(int entity)
-        {
-
-        }
-
 
         #region Systems
 
-        public void AddSystem(ISystem system)
+        /// <summary>
+        /// Adds the start, process and end systems from the system, doesn't check if already exists
+        /// </summary>
+        /// <param name="system"></param>
+        /// <returns></returns>
+        public Registry AddSystem(BaseSystem system)
         {
+            if (system is IStartSystem start)
+                _startSystems.Add(start);
+            if (system is IProcessSystem process)
+                _processSystems.Add(process);
+            if (system is IEndSystem end)
+                _endSystems.Add(end);
 
-        }
-
-        public void AddSystemBefore(ISystem system)
-        {
-
-        }
-
-        public void AddSystemAfter(ISystem system)
-        {
-
-        }
-
-        public void AddSingleFrameSystem(ISystem system)
-        {
-
-        }
-
-        public void RemoveSystem(ISystem)
-        {
-
-        }
-
-        public void Start()
-        {
-
-        }
-
-        public void Update()
-        {
-
-        }
-
-        public void End()
-        {
-
+            return this;
         }
 
         /// <summary>
-        /// Executes The [ref="End"] and [ref="Start"] functions
-        /// only if already started
+        /// Creates and adds the system, checks if already exists
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <returns>the system instance</returns>
+        public T AddSystem<T>() where T : BaseSystem, new()
+        {
+            var system = GetSystem<T>();
+            if (system != null)
+                return system;
+
+            system = new T();
+            AddSystem(system);
+
+            return system;
+        }
+
+        /// <summary>
+        /// Adds the system before the first system of type <typeparamref name="T"/>
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="system"></param>
+        public void AddSystemBefore<T>(BaseSystem system) where T : BaseSystem
+        {
+            // TODO
+            throw new NotImplementedException();
+        }
+
+        /// <summary>
+        /// Adds the system after the first system of type <typeparamref name="T"/>
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="system"></param>
+        public void AddSystemAfter<T>(BaseSystem system) where T : BaseSystem
+        {
+            // TODO
+            throw new NotImplementedException();
+        }
+
+        /// <summary>
+        /// Adds the system before the first system of type <paramref name="type"/>
+        /// </summary>
+        /// <param name="type"></param>
+        /// <param name="system"></param>
+        public void AddSystemBefore(Type type, BaseSystem system)
+        {
+            // TODO
+            throw new NotImplementedException();
+        }
+
+        /// <summary>
+        /// Adds the system after the first system of type <paramref name="type"/>
+        /// </summary>
+        /// <param name="type"></param>
+        /// <param name="system"></param>
+        public void AddSystemAfter(Type type, BaseSystem system)
+        {
+            // TODO
+            throw new NotImplementedException();
+        }
+
+        /// <summary>
+        /// Adds an action when registry lifecycle starts
+        /// </summary>
+        /// <param name="notificable"></param>
+        public void AddStartNotificable(Action<Registry> notificable)
+        {
+            _startNotificables += notificable;
+        }
+
+        /// <summary>
+        /// Adds an action when registry lifecycle ends
+        /// </summary>
+        /// <param name="notificable"></param>
+        public void AddEndNotificable(Action<Registry> notificable)
+        {
+            _endNotificables += notificable;
+        }
+
+        /// <summary>
+        /// Removes an action from starts
+        /// </summary>
+        /// <param name="notificable"></param>
+        public void RemoveStartNotificable(Action<Registry> notificable)
+        {
+            _startNotificables -= notificable;
+        }
+
+        /// <summary>
+        /// Removes an action from end
+        /// </summary>
+        /// <param name="notificable"></param>
+        public void RemoveEndNotificable(Action<Registry> notificable)
+        {
+            _endNotificables -= notificable;
+        }
+
+        /// <summary>
+        /// Removes a systems from the registry
+        /// </summary>
+        /// <param name="system"></param>
+        public void RemoveSystem(BaseSystem system)
+        {
+            if (system is IStartSystem start)
+                _startSystems.Remove(start);
+            if (system is IProcessSystem process)
+                _processSystems.Remove(process);
+            if (system is IEndSystem end)
+                _endSystems.Remove(end);
+        }
+
+        /// <summary>
+        /// Removes the systems of type <typeparamref name="T"/>
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        public void RemoveSystem<T>() where T : BaseSystem
+        {
+            int i = 0;
+            foreach (var system in _startSystems)
+            {
+                if (system is T)
+                    _startSystems.RemoveAt(i);
+                i++;
+            }
+
+            i = 0;
+            foreach (var system in _processSystems)
+            {
+                if (system is T)
+                    _startSystems.RemoveAt(i);
+                i++;
+            }
+
+            i = 0;
+            foreach (var system in _endSystems)
+            {
+                if (system is T)
+                    _startSystems.RemoveAt(i);
+                i++;
+            }
+        }
+
+        /// <summary>
+        /// Enqueues a single frame system to be executed instantanusly
+        /// </summary>
+        /// <param name="system"></param>
+        public void EnqueueSingleFrameSystem(ISingleFrameSystem system)
+        {
+            _singleFrameSystems.Enqueue(system);
+        }
+
+        public void EnqueuePreProcessSystem(IPreProcessSystem system)
+        {
+            _preProcessSystems.Enqueue(system);
+        }
+
+        public void EnqueuePostProcessSystem(IPostProcessSystem system)
+        {
+            _postProcessSystems.Enqueue(system);
+        }
+
+        /// <summary>
+        /// Gets the system if exists
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <returns></returns>
+        public T GetSystem<T>() where T : BaseSystem
+        {
+            for (int i = 0; i < _startSystems.Count; i++)
+                if (_startSystems[i] is T)
+                    return _startSystems[i] as T;
+
+            for (int i = 0; i < _processSystems.Count; i++)
+                if (_processSystems[i] is T)
+                    return _processSystems[i] as T;
+
+            for (int i = 0; i < _endSystems.Count; i++)
+                if (_endSystems[i] is T)
+                    return _endSystems[i] as T;
+
+            return null;
+        }
+
+        /// <summary>
+        /// Checks if the registry has a system of type <typeparamref name="T"/>
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <returns></returns>
+        public bool HasSystem<T>() where T : BaseSystem
+        {
+            if (HasStartSystem<T>())
+                return true;
+
+            if (HasProcessSystem<T>())
+                return true;
+
+            if (HasEndSystem<T>())
+                return true;
+
+            return false;
+        }
+
+        /// <summary>
+        /// Checks if the registry has a start system of type <typeparamref name="T"/>
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <returns></returns>
+        public bool HasStartSystem<T>() where T : BaseSystem
+        {
+            for (int i = 0; i < _startSystems.Count; i++)
+                if (_startSystems[i] is T)
+                    return true;
+
+            return false;
+        }
+
+        /// <summary>
+        /// Checks if the registry has a process system of type <typeparamref name="T"/>
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <returns></returns>
+        public bool HasProcessSystem<T>() where T : BaseSystem
+        {
+            for (int i = 0; i < _processSystems.Count; i++)
+                if (_processSystems[i] is T)
+                    return true;
+
+            return false;
+        }
+
+        /// <summary>
+        /// Checks if the registry has a end system of type <typeparamref name="T"/>
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <returns></returns>
+        public bool HasEndSystem<T>() where T : BaseSystem
+        {
+            for (int i = 0; i < _endSystems.Count; i++)
+                if (_endSystems[i] is T)
+                    return true;
+
+            return false;
+        }
+
+        #region Lifecycle
+
+        /// <summary>
+        /// Starts the system's lifecycle
+        /// </summary>
+        public void Start()
+        {
+            if (Started)
+                return;
+
+            Starting = true;
+
+            _startNotificables.Invoke(this);
+
+            BaseSystem sys;
+            foreach (var system in _startSystems)
+            {
+                sys = (BaseSystem)system;
+                sys.SetRegistry(this);
+                DispatchSystem(sys.Descriptor, system.Start);
+                sys.SetRegistry(null);
+                DispatchSingleFrames();
+            }
+
+            Starting = false;
+            Started = true;
+        }
+
+        /// <summary>
+        /// Executes the pre, post and process
+        /// </summary>
+        public void Process()
+        {
+            if (!Started)
+                return;
+
+            Processing = true;
+
+            BaseSystem sys;
+
+            // Dispatch all preprocessors
+            IPreProcessSystem pre;
+            while (_preProcessSystems.Count > 0)
+            {
+                pre = _preProcessSystems.Dequeue();
+                sys = (BaseSystem)pre;
+                sys.SetRegistry(this);
+                DispatchSystem(sys.Descriptor, pre.PreProcess);
+                sys.SetRegistry(null);
+                DispatchSingleFrames();
+            }
+
+            // Dispatch processors
+            foreach (var system in _processSystems)
+            {
+                sys = (BaseSystem)system;
+                sys.SetRegistry(this);
+                DispatchSystem(sys.Descriptor, system.Process);
+                sys.SetRegistry(null);
+                DispatchSingleFrames();
+            }
+
+            // Dispatch postprocessors
+            IPostProcessSystem post;
+            while (_postProcessSystems.Count > 0)
+            {
+                post = _postProcessSystems.Dequeue();
+                sys = (BaseSystem)post;
+                sys.SetRegistry(this);
+                DispatchSystem(sys.Descriptor, post.PostProcess);
+                sys.SetRegistry(null);
+                DispatchSingleFrames();
+            }
+
+            Processing = false;
+
+            if (_restart)
+            {
+                _restart = false;
+                End();
+                Start();
+            }
+        }
+
+        /// <summary>
+        /// Ends the system's lifecycle
+        /// </summary>
+        public void End()
+        {
+            if (!Started)
+                return;
+
+            Ending = true;
+
+            BaseSystem sys;
+            foreach (var system in _endSystems)
+            {
+                sys = (BaseSystem)system;
+                sys.SetRegistry(this);
+                DispatchSystem(sys.Descriptor, system.End);
+                sys.SetRegistry(null);
+                DispatchSingleFrames();
+            }
+
+            _endNotificables.Invoke(this);
+
+            Ending = false;
+            Started = false;
+
+            if (_restart)
+            {
+                _restart = false;
+                Start();
+            }
+        }
+
+        /// <summary>
+        /// Restarts the system's lifecycle
         /// </summary>
         public void Restart()
         {
-
+            if (Started)
+            {
+                if (!Processing && !Starting && !Ending)
+                {
+                    End();
+                    Start();
+                }
+                else _restart = true;
+            }
         }
 
-        #endregion
-
-
-        #region Resources
-
-        public void AddResource(object resource)
-        {
-
-        }
-
-        public ref T GetResource<T>()
-        {
-
-        }
-
-        #endregion
-#endif
-        #endregion
 
         /// <summary>
-        /// Creates the component pool if it didn't exist. Helps to prevent <see cref="InvalidComponentException"/>
+        /// Dispatch automatically a system from an action
         /// </summary>
-        /// <typeparam name="T"></typeparam>
-        public void RegisterComponent<T>()
+        /// <param name="descriptor">Describes the components to be included and ignored</param>
+        /// <param name="system"></param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void DispatchSystem(ViewDescriptor descriptor, Action<Group> system)
         {
-            GetPoolOrCreate<T>();
+            var view = GetView(descriptor);
+
+            view.Each(system);
         }
+
+        /// <summary>
+        /// Internal use to dispatch all single frame systems after every other system
+        /// </summary>
+        void DispatchSingleFrames()
+        {
+            ISingleFrameSystem system;
+            BaseSystem sys;
+            while (_singleFrameSystems.Count > 0)
+            {
+                system = _singleFrameSystems.Dequeue();
+                sys = (BaseSystem)system;
+                sys.SetRegistry(this);
+                DispatchSystem(sys.Descriptor, system.SingleFrame);
+                sys.SetRegistry(null);
+            }
+        }
+
+        #endregion
+
+        #endregion
+
+        #endregion
 
         /// <summary>
         /// Deletes the component pools that are empty to save space

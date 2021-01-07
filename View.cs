@@ -1,15 +1,51 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
-using System.Text;
 
 namespace Necs
 {
     public class Group
     {
+        /// <summary>
+        /// The current entity
+        /// </summary>
         public Entity Entity { get; internal set; }
+        
+        /// <summary>
+        /// Index of the current iteration
+        /// </summary>
+        public int Iteration { get; internal set; }
+
+        /// <summary>
+        /// Whether is the first iteration
+        /// </summary>
+        public bool IsFirst => Iteration == 0;
+
+        /// <summary>
+        /// Whether is the last iteration
+        /// </summary>
+        public bool IsLast
+        {
+            get
+            {
+                if (!_isLast.HasValue)
+                    _isLast = !_view.HasNext(_archetypeIndex, _index);
+
+                return _isLast.Value;
+            }
+        }
+
         internal Archetype _archetype;
+        internal int _archetypeIndex, _index;
+
         Dictionary<Type, object> _cache = new Dictionary<Type, object>(16);
+        View _view;
+        bool? _isLast;
+
+        internal Group(View view)
+        {
+            _view = view;
+        }
 
         /// <summary>
         /// Gets the entity's component. For struct components use <see cref="GetRef{T}"/>
@@ -183,58 +219,51 @@ namespace Necs
         internal void Clear()
         {
             _cache.Clear();
+            _isLast = null;
         }
     }
 
-    public class ViewBuilder
+    public class ViewDescriptor
     {
-        ArchetypeManager _manager;
+        public List<Type> WithComponents = new List<Type>(10);
+        public List<Type> WithoutComponents = new List<Type>(10);
 
-        List<Type> _with = new List<Type>(10);
-        List<Type> _without = new List<Type>(10);
+        public ViewDescriptor()
+        { }
 
-        internal ViewBuilder(ArchetypeManager manager)
+        public ViewDescriptor(params Type[] types)
         {
-            _manager = manager;
+            WithComponents.AddRange(types);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public ViewBuilder With<T>() => With(typeof(T));
+        public ViewDescriptor With<T>() => With(typeof(T));
 
 
-        public ViewBuilder With(params Type[] types)
+        public ViewDescriptor With(params Type[] types)
         {
-            _with.AddRange(types);
+            WithComponents.AddRange(types);
             return this;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public ViewBuilder Without<T>() => Without(typeof(T));
+        public ViewDescriptor Without<T>() => Without(typeof(T));
 
 
-        public ViewBuilder Without(params Type[] types)
+        public ViewDescriptor Without(params Type[] types)
         {
-            _without.AddRange(types);
+            WithoutComponents.AddRange(types);
             return this;
         }
 
-        public View Build()
+        public View Build(Registry registry)
         {
-            return new View(_manager.GetArchetypes(_with.ToArray(), _without.Count > 0 ? _without.ToArray() : null));
+            return registry.GetView(this);
         }
     }
 
     public class View
     {
-        Archetype[] _archetypes;
-
-        int _entitiesCount = -1;
-
-        internal View(Archetype[] archetypes)
-        {
-            _archetypes = archetypes;
-        }
-
         /// <summary>
         /// The amount of entities the view has
         /// </summary>
@@ -242,14 +271,35 @@ namespace Necs
         {
             get
             {
-                if (_entitiesCount == -1)
-                {
-                    _entitiesCount = 0;
-                    for (int i = 0; i < _archetypes.Length; i++)
-                        _entitiesCount += _archetypes[i].EntitiesCount;
-                }
-                return _entitiesCount;
+                var count = 0;
+                for (int i = 0; i < _archetypes.Length; i++)
+                    count += _archetypes[i].EntitiesCount;
+
+                return count;
             }
+        }
+
+        Archetype[] _archetypes;
+
+        internal View(Archetype[] archetypes)
+        {
+            _archetypes = archetypes;
+        }
+
+        internal bool HasNext(int archetype, int index)
+        {
+            int i = index + 1;
+            for (; archetype < _archetypes.Length; archetype++)
+            {
+                for (; i < _archetypes[archetype].Entities.Size; i++)
+                {
+                    if (_archetypes[archetype].Entities.Buffer[i].IsValid())
+                        return true;
+                }
+                i = 0;
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -281,13 +331,47 @@ namespace Necs
         }
 
         /// <summary>
+        /// Iterates through the view entities with enumeration
+        /// </summary>
+        /// <returns></returns>
+        public IEnumerable<(int, Entity)> EnumeratedEntities()
+        {
+            int i, j, index = 0;
+
+            for (j = 0; j < _archetypes.Length; j++)
+                for (i = 0; i < _archetypes[j].Entities.Size; i++)
+                    if (_archetypes[j].Entities.Buffer[i].IsValid())
+                    {
+                        yield return (index, _archetypes[j].Entities.Buffer[i]);
+                        index++;
+                    }
+        }
+
+        /// <summary>
+        /// Executes an action with the view entities with enumeration
+        /// </summary>
+        /// <param name="action"></param>
+        public void Entities(Action<int, Entity> action)
+        {
+            int i, j, index = 0;
+
+            for (j = 0; j < _archetypes.Length; j++)
+                for (i = 0; i < _archetypes[j].Entities.Size; i++)
+                    if (_archetypes[j].Entities.Buffer[i].IsValid())
+                    {
+                        action.Invoke(index, _archetypes[j].Entities.Buffer[i]);
+                        index++;
+                    }
+        }
+
+        /// <summary>
         /// Iterates through the view giving a entity <see cref="Group"/>
         /// </summary>
         /// <returns></returns>
         public IEnumerable<Group> Each()
         {
-            int i, j;
-            var group = new Group();
+            int i, j, iteration = 0;
+            var group = new Group(this);
 
             for (j = 0; j < _archetypes.Length; j++)
             {
@@ -298,7 +382,11 @@ namespace Necs
                     {
                         group.Clear();
                         group.Entity = _archetypes[j].Entities.Buffer[i];
+                        group.Iteration = iteration;
+                        group._archetypeIndex = j;
+                        group._index = i;
                         yield return group;
+                        iteration++;
                     }
                 }
             }
@@ -310,8 +398,8 @@ namespace Necs
         /// <param name="action"></param>
         public void Each(Action<Group> action)
         {
-            int i, j;
-            var group = new Group();
+            int i, j, iteration = 0;
+            var group = new Group(this);
 
             for (j = 0; j < _archetypes.Length; j++)
             {
@@ -323,7 +411,11 @@ namespace Necs
                     {
                         group.Clear();
                         group.Entity = _archetypes[j].Entities.Buffer[i];
+                        group.Iteration = iteration;
+                        group._archetypeIndex = j;
+                        group._index = i;
                         action.Invoke(group);
+                        iteration++;
                     }
                 }
             }
@@ -450,6 +542,5 @@ namespace Necs
         }
 
         #endregion
-
     }
 }
