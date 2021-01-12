@@ -135,8 +135,8 @@ namespace Necs
 
             // Only iterate through the component pools we know have the entity
             if (archetype != null)
-                for (int i = 0; i < archetype.ComponentPools.Length; i++)
-                    archetype.ComponentPools[i].Delete(entity);
+                foreach (var pool in archetype.ComponentPools.Values)
+                    pool.Delete(entity);
 
             _entities.Remove(entity);
         }
@@ -666,15 +666,15 @@ namespace Necs
         {
             ValidateEntity(entity);
 
-            var pool = _entityArchetype[entity.Index];
+            var archetype = _entityArchetype[entity.Index];
 
-            if (pool == null)
+            if (archetype == null)
                 return this;
 
-            for (int i = 0; i < pool.ComponentsCount; i++)
-                pool.ComponentPools[i].Delete(entity);
+            foreach (var pool in archetype.ComponentPools.Values)
+                pool.Delete(entity);
 
-            pool.RemoveEntity(entity);
+            archetype.RemoveEntity(entity);
             _entityArchetype[entity.Index] = null;
 
             return this;

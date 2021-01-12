@@ -12,13 +12,12 @@ namespace Necs
 
         public int Index => (int)Id;
 
+        public bool IsValid => IsValidEntity(this);
+
         public Entity(int index, int version)
         {
             Id = ((long)version << 32 | (long)index);
         }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public bool IsValid() => IsValidEntity(this);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static bool IsValidEntity(Entity entity)

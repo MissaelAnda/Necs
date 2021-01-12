@@ -77,14 +77,14 @@ namespace Necs
     internal class Archetype
     {
         public readonly int Hash;
-        public readonly Type[] Types;
-        public readonly IComponentPool[] ComponentPools;
 
         public FillableList<Entity> Entities = new FillableList<Entity>(100);
 
-        public int ComponentsCount => Types.Length;
+        public int ComponentsCount => ComponentPools.Count;
 
         public int EntitiesCount => Entities.Count;
+
+        public Dictionary<Type, IComponentPool> ComponentPools;
 
         public Archetype(Registry registry, params Type[] types) :
             this(ArchetypeManager.CreateHash(types), registry, types)
@@ -92,23 +92,23 @@ namespace Necs
 
         public Archetype(int hash, Registry registry, params Type[] types)
         {
-            Types = types;
-            ComponentPools = new IComponentPool[types.Length];
+            ComponentPools = new Dictionary<Type, IComponentPool>(types.Length);
             Hash = hash;
 
             for (int i = 0; i < types.Length; i++)
             {
-                if ((ComponentPools[i] = registry.GetPool(types[i])) == null)
+                var pool = registry.GetPool(types[i]);
+                if (pool == null)
                     throw new InvalidComponentException(types[i]);
+
+                ComponentPools.Add(types[i], pool);
             }
         }
 
         public ComponentPool<T> GetPool<T>()
         {
-            var type = typeof(T);
-            for (int i = 0; i < ComponentsCount; i++)
-                if (type == Types[i])
-                    return ComponentPools[i] as ComponentPool<T>;
+            if (ComponentPools.TryGetValue(typeof(T), out var pool))
+                return pool as ComponentPool<T>;
 
             return null;
         }
@@ -126,25 +126,25 @@ namespace Necs
         public Type[] GetTypesWith(params Type[] with)
         {
             // Assumes no type will be duplicated
-            var res = new Type[with.Length + Types.Length];
-            Types.CopyTo(res, 0);
-            with.CopyTo(res, Types.Length);
+            var res = new Type[with.Length + ComponentPools.Keys.Count];
+            ComponentPools.Keys.CopyTo(res, 0);
+            with.CopyTo(res, ComponentPools.Keys.Count);
             return res;
         }
 
         public Type[] GetTypesWithout(params Type[] without)
         {
             // Assumes that "without" is a subset of "Types"
-            var res = new Type[Types.Length - without.Length];
+            var res = new Type[ComponentPools.Count - without.Length];
 
             int pos = 0;
             bool found;
-            for (int i = 0; i < Types.Length; i++)
+            foreach (var key in ComponentPools.Keys)
             {
                 found = false;
                 for (int j = 0; j < without.Length; j++)
                 {
-                    if (Types[i] == without[j])
+                    if (key == without[j])
                     {
                         found = true;
                         break;
@@ -152,7 +152,7 @@ namespace Necs
                 }
 
                 if (!found)
-                    res[pos++] = Types[i];
+                    res[pos++] = key;
             }
 
             return res;
@@ -160,11 +160,7 @@ namespace Necs
 
         public bool HasType(Type type)
         {
-            for (int i = 0; i < Types.Length; i++)
-                if (Types[i] == type)
-                    return true;
-
-            return false;
+            return ComponentPools.ContainsKey(type);
         }
 
 
@@ -176,5 +172,7 @@ namespace Necs
 
             return true;
         }
+
+        public IComponentPool this[Type type] => ComponentPools[type];
     }
 }
